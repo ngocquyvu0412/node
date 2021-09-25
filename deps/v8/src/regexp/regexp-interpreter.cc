@@ -6,17 +6,18 @@
 
 #include "src/regexp/regexp-interpreter.h"
 
-#include "src/ast/ast.h"
 #include "src/base/small-vector.h"
 #include "src/base/strings.h"
+#include "src/execution/isolate.h"
 #include "src/logging/counters.h"
 #include "src/objects/js-regexp-inl.h"
-#include "src/objects/objects-inl.h"
+#include "src/objects/string-inl.h"
 #include "src/regexp/regexp-bytecodes.h"
 #include "src/regexp/regexp-macro-assembler.h"
 #include "src/regexp/regexp-stack.h"  // For kMaximumStackSize.
 #include "src/regexp/regexp.h"
 #include "src/strings/unicode.h"
+#include "src/utils/memcopy.h"
 #include "src/utils/utils.h"
 
 #ifdef V8_INTL_SUPPORT
@@ -1110,7 +1111,7 @@ IrregexpInterpreter::Result IrregexpInterpreter::MatchInternal(
 // builtin.
 IrregexpInterpreter::Result IrregexpInterpreter::MatchForCallFromJs(
     Address subject, int32_t start_position, Address, Address,
-    int* output_registers, int32_t output_register_count, Address,
+    int* output_registers, int32_t output_register_count,
     RegExp::CallOrigin call_origin, Isolate* isolate, Address regexp) {
   DCHECK_NOT_NULL(isolate);
   DCHECK_NOT_NULL(output_registers);

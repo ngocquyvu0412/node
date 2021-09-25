@@ -84,10 +84,17 @@ using compiler::Node;
 
 #define WASM_WRAPPER_RETURN_VALUE 8754
 
-#define BUILD(r, ...)                      \
-  do {                                     \
-    byte code[] = {__VA_ARGS__};           \
-    r.Build(code, code + arraysize(code)); \
+#define BUILD(r, ...)                            \
+  do {                                           \
+    byte __code[] = {__VA_ARGS__};               \
+    r.Build(__code, __code + arraysize(__code)); \
+  } while (false)
+
+#define ADD_CODE(vec, ...)                           \
+  do {                                               \
+    byte __buf[] = {__VA_ARGS__};                    \
+    for (size_t __i = 0; __i < sizeof(__buf); __i++) \
+      vec.push_back(__buf[__i]);                     \
   } while (false)
 
 // For tests that must manually import a JSFunction with source code.
@@ -95,6 +102,10 @@ struct ManuallyImportedJSFunction {
   const FunctionSig* sig;
   Handle<JSFunction> js_function;
 };
+
+// Helper Functions.
+bool IsSameNan(float expected, float actual);
+bool IsSameNan(double expected, double actual);
 
 // A  Wasm module builder. Globals are pre-set, however, memory and code may be
 // progressively added by a test. In turn, we piecemeal update the runtime
@@ -128,7 +139,7 @@ class TestingModuleBuilder {
   byte AddSignature(const FunctionSig* sig) {
     DCHECK_EQ(test_module_->types.size(),
               test_module_->canonicalized_type_ids.size());
-    test_module_->add_signature(sig);
+    test_module_->add_signature(sig, kNoSuperType);
     size_t size = test_module_->types.size();
     CHECK_GT(127, size);
     return static_cast<byte>(size - 1);
@@ -439,7 +450,8 @@ class WasmRunnerBase : public InitializedHandleScope {
                                     const char* name = nullptr) {
     functions_.emplace_back(
         new WasmFunctionCompiler(&zone_, sig, &builder_, name));
-    builder().AddSignature(sig);
+    byte sig_index = builder().AddSignature(sig);
+    functions_.back()->SetSigIndex(sig_index);
     return *functions_.back();
   }
 

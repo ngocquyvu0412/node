@@ -38,7 +38,7 @@ bool EnterIncrementalMarkingIfNeeded(Marker::MarkingConfig config,
     WriteBarrier::IncrementalOrConcurrentMarkingFlagUpdater::Enter();
 #if defined(CPPGC_CAGED_HEAP)
     heap.caged_heap().local_data().is_incremental_marking_in_progress = true;
-#endif
+#endif  // defined(CPPGC_CAGED_HEAP)
     return true;
   }
   return false;
@@ -52,7 +52,7 @@ bool ExitIncrementalMarkingIfNeeded(Marker::MarkingConfig config,
     WriteBarrier::IncrementalOrConcurrentMarkingFlagUpdater::Exit();
 #if defined(CPPGC_CAGED_HEAP)
     heap.caged_heap().local_data().is_incremental_marking_in_progress = false;
-#endif
+#endif  // defined(CPPGC_CAGED_HEAP)
     return true;
   }
   return false;
@@ -214,7 +214,7 @@ void MarkerBase::StartMarking() {
 
   is_marking_ = true;
   if (EnterIncrementalMarkingIfNeeded(config_, heap())) {
-    StatsCollector::EnabledScope stats_scope(
+    StatsCollector::EnabledScope inner_stats_scope(
         heap().stats_collector(), StatsCollector::kMarkIncrementalStart);
 
     // Performing incremental or concurrent marking.
@@ -510,7 +510,7 @@ bool MarkerBase::ProcessWorklistsWithDeadline(
     }
 
     {
-      StatsCollector::EnabledScope stats_scope(
+      StatsCollector::EnabledScope inner_stats_scope(
           heap().stats_collector(), StatsCollector::kMarkProcessEphemerons);
       if (!DrainWorklistWithBytesAndTimeDeadline(
               mutator_marking_state_, marked_bytes_deadline, time_deadline,

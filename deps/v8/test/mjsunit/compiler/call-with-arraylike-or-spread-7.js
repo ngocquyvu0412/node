@@ -37,12 +37,13 @@
   assertTrue(log_got_interpreted);
 
   // Compile foo.
-  %OptimizeFunctionOnNextCall(log);
-  %OptimizeFunctionOnNextCall(foo);
+  %OptimizeFunctionForTopTier(log);
+  %OptimizeFunctionForTopTier(foo);
   assertEquals(1, foo());
   // The call with spread should have been inlined.
   assertFalse(log_got_interpreted);
   assertOptimized(foo);
+  %PrepareFunctionForOptimization(foo);
 
   // This invalidates the DependOnArrayIteratorProtector and causes deopt.
   Object.defineProperty(Array.prototype, Symbol.iterator, {
@@ -58,7 +59,7 @@
 
   // Recompile 'foo'.
   %PrepareFunctionForOptimization(foo);
-  %OptimizeFunctionOnNextCall(foo);
+  %OptimizeFunctionForTopTier(foo);
   assertEquals(42, foo());
   // The call with spread will not be inlined because we have redefined the
   // array iterator.

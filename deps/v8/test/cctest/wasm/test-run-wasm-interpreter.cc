@@ -38,7 +38,7 @@ TEST(Run_WasmIfElse) {
 
 TEST(Run_WasmIfReturn) {
   WasmRunner<int32_t, int32_t> r(TestExecutionTier::kInterpreter);
-  BUILD(r, WASM_IF(WASM_LOCAL_GET(0), WASM_RETURN1(WASM_I32V_2(77))),
+  BUILD(r, WASM_IF(WASM_LOCAL_GET(0), WASM_RETURN(WASM_I32V_2(77))),
         WASM_I32V_2(65));
   CHECK_EQ(65, r.Call(0));
   CHECK_EQ(77, r.Call(1));
@@ -501,6 +501,32 @@ TEST(Regress1092130) {
             WASM_SEQ(WASM_UNREACHABLE, WASM_BLOCK_X(sig_v_i, WASM_NOP)),
             WASM_I32V(0)),
         WASM_DROP);
+  r.Call();
+}
+
+TEST(Regress1247119) {
+  WasmRunner<uint32_t> r(TestExecutionTier::kInterpreter);
+  BUILD(r, kExprLoop, 0, kExprTry, 0, kExprUnreachable, kExprDelegate, 0,
+        kExprEnd);
+  r.Call();
+}
+
+TEST(Regress1246712) {
+  WasmRunner<uint32_t> r(TestExecutionTier::kInterpreter);
+  TestSignatures sigs;
+  const int kExpected = 1;
+  uint8_t except = r.builder().AddException(sigs.v_v());
+  BUILD(r, kExprTry, kWasmI32.value_type_code(), kExprTry,
+        kWasmI32.value_type_code(), kExprThrow, except, kExprEnd, kExprCatchAll,
+        kExprI32Const, kExpected, kExprEnd);
+  CHECK_EQ(kExpected, r.Call());
+}
+
+TEST(Regress1249306) {
+  WasmRunner<uint32_t> r(TestExecutionTier::kInterpreter);
+  TestSignatures sigs;
+  BUILD(r, kExprTry, kVoid, kExprCatchAll, kExprTry, kVoid, kExprDelegate, 0,
+        kExprEnd, kExprI32Const, 0);
   r.Call();
 }
 

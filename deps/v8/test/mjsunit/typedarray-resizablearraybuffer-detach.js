@@ -6,24 +6,10 @@
 
 "use strict";
 
-class MyUint8Array extends Uint8Array {};
-
-const ctors = [
-  Uint8Array,
-  Int8Array,
-  Uint16Array,
-  Int16Array,
-  Int32Array,
-  Float32Array,
-  Float64Array,
-  Uint8ClampedArray,
-  BigUint64Array,
-  BigInt64Array,
-  MyUint8Array
-];
+d8.file.execute('test/mjsunit/typedarray-helpers.js');
 
 (function ConstructorThrowsIfBufferDetached() {
-  const rab = new ResizableArrayBuffer(40, 80);
+  const rab = CreateResizableArrayBuffer(40, 80);
   %ArrayBufferDetach(rab);
 
   for (let ctor of ctors) {
@@ -34,7 +20,7 @@ const ctors = [
 })();
 
 (function TypedArrayLengthAndByteLength() {
-  const rab = new ResizableArrayBuffer(40, 80);
+  const rab = CreateResizableArrayBuffer(40, 80);
 
   let tas = [];
   for (let ctor of ctors) {
@@ -53,7 +39,7 @@ const ctors = [
 })();
 
 (function AccessDetachedTypedArray() {
-  const rab = new ResizableArrayBuffer(16, 40);
+  const rab = CreateResizableArrayBuffer(16, 40);
 
   const i8a = new Int8Array(rab, 0, 4);
 
@@ -90,7 +76,7 @@ const ctors = [
   }
   %EnsureFeedbackVectorForFunction(ReadElement2);
 
-  const rab = new ResizableArrayBuffer(16, 40);
+  const rab = CreateResizableArrayBuffer(16, 40);
 
   const i8a = new Int8Array(rab, 0, 4);
   assertEquals(0, ReadElement2(i8a));
@@ -114,7 +100,7 @@ const ctors = [
   }
   %EnsureFeedbackVectorForFunction(WriteElement2);
 
-  const rab = new ResizableArrayBuffer(16, 40);
+  const rab = CreateResizableArrayBuffer(16, 40);
 
   const i8a = new Int8Array(rab, 0, 4);
   assertEquals(0, i8a[2]);
@@ -134,5 +120,29 @@ const ctors = [
   // OOB read
   for (let i = 0; i < 3; ++i) {
     assertEquals(undefined, i8a[2]);
+  }
+})();
+
+(function FillParameterConversionDetaches() {
+  for (let ctor of ctors) {
+    const rab = CreateResizableArrayBuffer(4 * ctor.BYTES_PER_ELEMENT,
+                                           8 * ctor.BYTES_PER_ELEMENT);
+    const fixedLength = new ctor(rab, 0, 4);
+
+    let evil = { valueOf: () => { %ArrayBufferDetach(rab); return 1;}};
+    // The length is read after converting the first parameter ('value'), so the
+    // detaching parameter has to be the 2nd ('start') or 3rd ('end').
+    FillHelper(fixedLength, 1, 0, evil);
+  }
+})();
+
+(function CopyWithinParameterConversionDetaches() {
+  for (let ctor of ctors) {
+    const rab = CreateResizableArrayBuffer(4 * ctor.BYTES_PER_ELEMENT,
+                                           8 * ctor.BYTES_PER_ELEMENT);
+    const fixedLength = new ctor(rab, 0, 4);
+
+    let evil = { valueOf: () => { %ArrayBufferDetach(rab); return 2;}};
+    fixedLength.copyWithin(evil, 0, 1);
   }
 })();

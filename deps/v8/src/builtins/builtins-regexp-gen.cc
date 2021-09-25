@@ -18,6 +18,7 @@
 #include "src/objects/js-regexp-string-iterator.h"
 #include "src/objects/js-regexp.h"
 #include "src/objects/regexp-match-info.h"
+#include "src/regexp/regexp-flags.h"
 
 namespace v8 {
 namespace internal {
@@ -259,19 +260,19 @@ TNode<JSRegExpResult> RegExpBuiltinsAssembler::ConstructNewResultFromMatchInfo(
   {
     TNode<IntPtrT> from_cursor = var_from_cursor.value();
     TNode<IntPtrT> to_cursor = var_to_cursor.value();
-    TNode<Smi> start =
+    TNode<Smi> start_cursor =
         CAST(UnsafeLoadFixedArrayElement(match_info, from_cursor));
 
     Label next_iter(this);
-    GotoIf(SmiEqual(start, SmiConstant(-1)), &next_iter);
+    GotoIf(SmiEqual(start_cursor, SmiConstant(-1)), &next_iter);
 
     TNode<IntPtrT> from_cursor_plus1 =
         IntPtrAdd(from_cursor, IntPtrConstant(1));
-    TNode<Smi> end =
+    TNode<Smi> end_cursor =
         CAST(UnsafeLoadFixedArrayElement(match_info, from_cursor_plus1));
 
-    TNode<String> capture =
-        CAST(CallBuiltin(Builtin::kSubString, context, string, start, end));
+    TNode<String> capture = CAST(CallBuiltin(Builtin::kSubString, context,
+                                             string, start_cursor, end_cursor));
     UnsafeStoreFixedArrayElement(result_elements, to_cursor, capture);
     Goto(&next_iter);
 
@@ -337,10 +338,10 @@ TNode<JSRegExpResult> RegExpBuiltinsAssembler::ConstructNewResultFromMatchInfo(
 
     TVARIABLE(IntPtrT, var_i, IntPtrZero());
 
-    Label loop(this, &var_i);
+    Label inner_loop(this, &var_i);
 
-    Goto(&loop);
-    BIND(&loop);
+    Goto(&inner_loop);
+    BIND(&inner_loop);
     {
       TNode<IntPtrT> i = var_i.value();
       TNode<IntPtrT> i_plus_1 = IntPtrAdd(i, IntPtrConstant(1));
@@ -370,7 +371,7 @@ TNode<JSRegExpResult> RegExpBuiltinsAssembler::ConstructNewResultFromMatchInfo(
 
       var_i = i_plus_2;
       Branch(IntPtrGreaterThanOrEqual(var_i.value(), names_length),
-             &maybe_build_indices, &loop);
+             &maybe_build_indices, &inner_loop);
 
       BIND(&add_dictionary_property_slow);
       // If the dictionary needs resizing, the above Add call will jump here
@@ -435,8 +436,6 @@ TNode<HeapObject> RegExpBuiltinsAssembler::RegExpExecInternal(
   // External constants.
   TNode<ExternalReference> isolate_address =
       ExternalConstant(ExternalReference::isolate_address(isolate()));
-  TNode<ExternalReference> regexp_stack_memory_top_address = ExternalConstant(
-      ExternalReference::address_of_regexp_stack_memory_top_address(isolate()));
   TNode<ExternalReference> static_offsets_vector_address = ExternalConstant(
       ExternalReference::address_of_static_offsets_vector(isolate()));
 
@@ -605,26 +604,18 @@ TNode<HeapObject> RegExpBuiltinsAssembler::RegExpExecInternal(
     MachineType arg5_type = type_int32;
     TNode<Int32T> arg5 = SmiToInt32(register_count);
 
-    // Argument 6: Start (high end) of backtracking stack memory area. This
-    // argument is ignored in the interpreter.
-    TNode<RawPtrT> stack_top = UncheckedCast<RawPtrT>(
-        Load(MachineType::Pointer(), regexp_stack_memory_top_address));
+    // Argument 6: Indicate that this is a direct call from JavaScript.
+    MachineType arg6_type = type_int32;
+    TNode<Int32T> arg6 = Int32Constant(RegExp::CallOrigin::kFromJs);
 
-    MachineType arg6_type = type_ptr;
-    TNode<RawPtrT> arg6 = stack_top;
+    // Argument 7: Pass current isolate address.
+    MachineType arg7_type = type_ptr;
+    TNode<ExternalReference> arg7 = isolate_address;
 
-    // Argument 7: Indicate that this is a direct call from JavaScript.
-    MachineType arg7_type = type_int32;
-    TNode<Int32T> arg7 = Int32Constant(RegExp::CallOrigin::kFromJs);
-
-    // Argument 8: Pass current isolate address.
-    MachineType arg8_type = type_ptr;
-    TNode<ExternalReference> arg8 = isolate_address;
-
-    // Argument 9: Regular expression object. This argument is ignored in native
+    // Argument 8: Regular expression object. This argument is ignored in native
     // irregexp code.
-    MachineType arg9_type = type_tagged;
-    TNode<JSRegExp> arg9 = regexp;
+    MachineType arg8_type = type_tagged;
+    TNode<JSRegExp> arg8 = regexp;
 
     // TODO(v8:11880): avoid roundtrips between cdc and code.
     TNode<RawPtrT> code_entry = LoadCodeObjectEntry(code);
@@ -639,8 +630,7 @@ TNode<HeapObject> RegExpBuiltinsAssembler::RegExpExecInternal(
             std::make_pair(arg1_type, arg1), std::make_pair(arg2_type, arg2),
             std::make_pair(arg3_type, arg3), std::make_pair(arg4_type, arg4),
             std::make_pair(arg5_type, arg5), std::make_pair(arg6_type, arg6),
-            std::make_pair(arg7_type, arg7), std::make_pair(arg8_type, arg8),
-            std::make_pair(arg9_type, arg9)));
+            std::make_pair(arg7_type, arg7), std::make_pair(arg8_type, arg8)));
 
     // Check the result.
     // We expect exactly one result since we force the called regexp to behave
@@ -1041,23 +1031,16 @@ TNode<String> RegExpBuiltinsAssembler::FlagsGetter(TNode<Context> context,
         CAST(LoadObjectField(CAST(regexp), JSRegExp::kFlagsOffset));
     var_flags = SmiUntag(flags_smi);
 
-#define CASE_FOR_FLAG(FLAG)                                        \
-  do {                                                             \
-    Label next(this);                                              \
-    GotoIfNot(IsSetWord(var_flags.value(), FLAG), &next);          \
-    var_length = Uint32Add(var_length.value(), Uint32Constant(1)); \
-    Goto(&next);                                                   \
-    BIND(&next);                                                   \
-  } while (false)
+#define CASE_FOR_FLAG(Lower, Camel, ...)                                \
+  do {                                                                  \
+    Label next(this);                                                   \
+    GotoIfNot(IsSetWord(var_flags.value(), JSRegExp::k##Camel), &next); \
+    var_length = Uint32Add(var_length.value(), Uint32Constant(1));      \
+    Goto(&next);                                                        \
+    BIND(&next);                                                        \
+  } while (false);
 
-    CASE_FOR_FLAG(JSRegExp::kHasIndices);
-    CASE_FOR_FLAG(JSRegExp::kGlobal);
-    CASE_FOR_FLAG(JSRegExp::kIgnoreCase);
-    CASE_FOR_FLAG(JSRegExp::kLinear);
-    CASE_FOR_FLAG(JSRegExp::kMultiline);
-    CASE_FOR_FLAG(JSRegExp::kDotAll);
-    CASE_FOR_FLAG(JSRegExp::kUnicode);
-    CASE_FOR_FLAG(JSRegExp::kSticky);
+    REGEXP_FLAG_LIST(CASE_FOR_FLAG)
 #undef CASE_FOR_FLAG
   } else {
     DCHECK(!is_fastpath);
@@ -1085,6 +1068,7 @@ TNode<String> RegExpBuiltinsAssembler::FlagsGetter(TNode<Context> context,
     CASE_FOR_FLAG("dotAll", JSRegExp::kDotAll);
     CASE_FOR_FLAG("unicode", JSRegExp::kUnicode);
     CASE_FOR_FLAG("sticky", JSRegExp::kSticky);
+    CASE_FOR_FLAG("hasIndices", JSRegExp::kHasIndices);
 #undef CASE_FOR_FLAG
 
 #define CASE_FOR_FLAG(NAME, V8_FLAG_EXTERN_REF, FLAG)                      \
@@ -1107,10 +1091,6 @@ TNode<String> RegExpBuiltinsAssembler::FlagsGetter(TNode<Context> context,
   } while (false)
 
     CASE_FOR_FLAG(
-        "hasIndices",
-        ExternalReference::address_of_harmony_regexp_match_indices_flag(),
-        JSRegExp::kHasIndices);
-    CASE_FOR_FLAG(
         "linear",
         ExternalReference::address_of_enable_experimental_regexp_engine(),
         JSRegExp::kLinear);
@@ -1126,26 +1106,19 @@ TNode<String> RegExpBuiltinsAssembler::FlagsGetter(TNode<Context> context,
     TVARIABLE(IntPtrT, var_offset,
               IntPtrConstant(SeqOneByteString::kHeaderSize - kHeapObjectTag));
 
-#define CASE_FOR_FLAG(FLAG, CHAR)                              \
-  do {                                                         \
-    Label next(this);                                          \
-    GotoIfNot(IsSetWord(var_flags.value(), FLAG), &next);      \
-    const TNode<Int32T> value = Int32Constant(CHAR);           \
-    StoreNoWriteBarrier(MachineRepresentation::kWord8, string, \
-                        var_offset.value(), value);            \
-    var_offset = IntPtrAdd(var_offset.value(), int_one);       \
-    Goto(&next);                                               \
-    BIND(&next);                                               \
-  } while (false)
+#define CASE_FOR_FLAG(Lower, Camel, LowerCamel, Char, ...)              \
+  do {                                                                  \
+    Label next(this);                                                   \
+    GotoIfNot(IsSetWord(var_flags.value(), JSRegExp::k##Camel), &next); \
+    const TNode<Int32T> value = Int32Constant(Char);                    \
+    StoreNoWriteBarrier(MachineRepresentation::kWord8, string,          \
+                        var_offset.value(), value);                     \
+    var_offset = IntPtrAdd(var_offset.value(), int_one);                \
+    Goto(&next);                                                        \
+    BIND(&next);                                                        \
+  } while (false);
 
-    CASE_FOR_FLAG(JSRegExp::kHasIndices, 'd');
-    CASE_FOR_FLAG(JSRegExp::kGlobal, 'g');
-    CASE_FOR_FLAG(JSRegExp::kIgnoreCase, 'i');
-    CASE_FOR_FLAG(JSRegExp::kLinear, 'l');
-    CASE_FOR_FLAG(JSRegExp::kMultiline, 'm');
-    CASE_FOR_FLAG(JSRegExp::kDotAll, 's');
-    CASE_FOR_FLAG(JSRegExp::kUnicode, 'u');
-    CASE_FOR_FLAG(JSRegExp::kSticky, 'y');
+    REGEXP_FLAG_LIST(CASE_FOR_FLAG)
 #undef CASE_FOR_FLAG
 
     if (is_fastpath) {
@@ -1337,12 +1310,12 @@ TF_BUILTIN(RegExpPrototypeCompile, RegExpBuiltinsAssembler) {
 
     // {maybe_flags} must be undefined in this case, otherwise throw.
     {
-      Label next(this);
-      GotoIf(IsUndefined(maybe_flags), &next);
+      Label maybe_flags_is_undefined(this);
+      GotoIf(IsUndefined(maybe_flags), &maybe_flags_is_undefined);
 
       ThrowTypeError(context, MessageTemplate::kRegExpFlags);
 
-      BIND(&next);
+      BIND(&maybe_flags_is_undefined);
     }
 
     const TNode<JSRegExp> pattern = CAST(maybe_pattern);
@@ -1394,29 +1367,12 @@ TNode<BoolT> RegExpBuiltinsAssembler::SlowFlagGetter(TNode<Context> context,
   switch (flag) {
     case JSRegExp::kNone:
       UNREACHABLE();
-    case JSRegExp::kGlobal:
-      name = isolate()->factory()->global_string();
-      break;
-    case JSRegExp::kIgnoreCase:
-      name = isolate()->factory()->ignoreCase_string();
-      break;
-    case JSRegExp::kMultiline:
-      name = isolate()->factory()->multiline_string();
-      break;
-    case JSRegExp::kDotAll:
-      UNREACHABLE();  // Never called for dotAll.
-    case JSRegExp::kSticky:
-      name = isolate()->factory()->sticky_string();
-      break;
-    case JSRegExp::kUnicode:
-      name = isolate()->factory()->unicode_string();
-      break;
-    case JSRegExp::kHasIndices:
-      name = isolate()->factory()->has_indices_string();
-      break;
-    case JSRegExp::kLinear:
-      name = isolate()->factory()->linear_string();
-      break;
+#define V(Lower, Camel, LowerCamel, Char, Bit)          \
+  case JSRegExp::k##Camel:                              \
+    name = isolate()->factory()->LowerCamel##_string(); \
+    break;
+      REGEXP_FLAG_LIST(V)
+#undef V
   }
 
   TNode<Object> value = GetProperty(context, regexp, name);

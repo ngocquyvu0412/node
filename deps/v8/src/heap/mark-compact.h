@@ -376,11 +376,11 @@ class MainMarkingVisitor final
                      MarkingWorklists::Local* local_marking_worklists,
                      WeakObjects* weak_objects, Heap* heap,
                      unsigned mark_compact_epoch,
-                     BytecodeFlushMode bytecode_flush_mode,
+                     base::EnumSet<CodeFlushMode> code_flush_mode,
                      bool embedder_tracing_enabled, bool is_forced_gc)
       : MarkingVisitorBase<MainMarkingVisitor<MarkingState>, MarkingState>(
             kMainThreadTask, local_marking_worklists, weak_objects, heap,
-            mark_compact_epoch, bytecode_flush_mode, embedder_tracing_enabled,
+            mark_compact_epoch, code_flush_mode, embedder_tracing_enabled,
             is_forced_gc),
         marking_state_(marking_state),
         revisiting_object_(false) {}
@@ -390,9 +390,6 @@ class MainMarkingVisitor final
     return marking_state_->GreyToBlack(object) ||
            V8_UNLIKELY(revisiting_object_);
   }
-
-  void MarkDescriptorArrayFromWriteBarrier(DescriptorArray descriptors,
-                                           int number_of_own_descriptors);
 
  private:
   // Functions required by MarkingVisitorBase.
@@ -515,7 +512,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   void EnsurePageIsSwept(Page* page);
 
-  void DrainSweepingWorklists();
   void DrainSweepingWorklistForSpace(AllocationSpace space);
 
   // Checks if sweeping is in progress right now on any space.
@@ -570,7 +566,9 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   unsigned epoch() const { return epoch_; }
 
-  BytecodeFlushMode bytecode_flush_mode() const { return bytecode_flush_mode_; }
+  base::EnumSet<CodeFlushMode> code_flush_mode() const {
+    return code_flush_mode_;
+  }
 
   explicit MarkCompactCollector(Heap* heap);
   ~MarkCompactCollector() override;
@@ -581,10 +579,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   void VisitObject(HeapObject obj);
   // Used by incremental marking for black-allocated objects.
   void RevisitObject(HeapObject obj);
-  // Ensures that all descriptors int range [0, number_of_own_descripts)
-  // are visited.
-  void MarkDescriptorArrayFromWriteBarrier(DescriptorArray array,
-                                           int number_of_own_descriptors);
 
   // Drains the main thread marking worklist until the specified number of
   // bytes are processed. If the number of bytes is zero, then the worklist
@@ -668,9 +662,10 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   // Flushes a weakly held bytecode array from a shared function info.
   void FlushBytecodeFromSFI(SharedFunctionInfo shared_info);
 
-  // Clears bytecode arrays that have not been executed for multiple
-  // collections.
-  void ClearOldBytecodeCandidates();
+  // Clears bytecode arrays / baseline code that have not been executed for
+  // multiple collections.
+  void ProcessOldCodeCandidates();
+  void ProcessFlushedBaselineCandidates();
 
   // Resets any JSFunctions which have had their bytecode flushed.
   void ClearFlushedJsFunctions();
@@ -791,9 +786,9 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   // Bytecode flushing is disabled when the code coverage mode is changed. Since
   // that can happen while a GC is happening and we need the
-  // bytecode_flush_mode_ to remain the same through out a GC, we record this at
+  // code_flush_mode_ to remain the same through out a GC, we record this at
   // the start of each GC.
-  BytecodeFlushMode bytecode_flush_mode_;
+  base::EnumSet<CodeFlushMode> code_flush_mode_;
 
   friend class FullEvacuator;
   friend class RecordMigratedSlotVisitor;

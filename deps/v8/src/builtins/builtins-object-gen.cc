@@ -436,7 +436,9 @@ TF_BUILTIN(ObjectAssign, ObjectBuiltinsAssembler) {
 
   Label done(this);
   // 2. If only one argument was passed, return to.
-  GotoIf(UintPtrLessThanOrEqual(args.GetLength(), IntPtrConstant(1)), &done);
+  GotoIf(UintPtrLessThanOrEqual(args.GetLengthWithoutReceiver(),
+                                IntPtrConstant(1)),
+         &done);
 
   // 3. Let sources be the List of argument values starting with the
   //    second argument.
@@ -1094,7 +1096,7 @@ TF_BUILTIN(ObjectCreate, ObjectBuiltinsAssembler) {
   BIND(&no_properties);
   {
     TVARIABLE(Map, map);
-    TVARIABLE(HeapObject, properties);
+    TVARIABLE(HeapObject, new_properties);
     Label null_proto(this), non_null_proto(this), instantiate_map(this);
 
     Branch(IsNull(prototype), &null_proto, &non_null_proto);
@@ -1103,17 +1105,18 @@ TF_BUILTIN(ObjectCreate, ObjectBuiltinsAssembler) {
     {
       map = LoadSlowObjectWithNullPrototypeMap(native_context);
       if (V8_ENABLE_SWISS_NAME_DICTIONARY_BOOL) {
-        properties =
+        new_properties =
             AllocateSwissNameDictionary(SwissNameDictionary::kInitialCapacity);
       } else {
-        properties = AllocateNameDictionary(NameDictionary::kInitialCapacity);
+        new_properties =
+            AllocateNameDictionary(NameDictionary::kInitialCapacity);
       }
       Goto(&instantiate_map);
     }
 
     BIND(&non_null_proto);
     {
-      properties = EmptyFixedArrayConstant();
+      new_properties = EmptyFixedArrayConstant();
       map = LoadObjectFunctionInitialMap(native_context);
       GotoIf(TaggedEqual(prototype, LoadMapPrototype(map.value())),
              &instantiate_map);
@@ -1131,7 +1134,7 @@ TF_BUILTIN(ObjectCreate, ObjectBuiltinsAssembler) {
     BIND(&instantiate_map);
     {
       TNode<JSObject> instance =
-          AllocateJSObjectFromMap(map.value(), properties.value());
+          AllocateJSObjectFromMap(map.value(), new_properties.value());
       args.PopAndReturn(instance);
     }
   }
@@ -1242,9 +1245,8 @@ TF_BUILTIN(CreateGeneratorObject, ObjectBuiltinsAssembler) {
   TNode<BytecodeArray> bytecode_array =
       LoadSharedFunctionInfoBytecodeArray(shared);
 
-  TNode<IntPtrT> formal_parameter_count =
-      ChangeInt32ToIntPtr(LoadObjectField<Uint16T>(
-          shared, SharedFunctionInfo::kFormalParameterCountOffset));
+  TNode<IntPtrT> formal_parameter_count = ChangeInt32ToIntPtr(
+      LoadSharedFunctionInfoFormalParameterCountWithoutReceiver(shared));
   TNode<IntPtrT> frame_size = ChangeInt32ToIntPtr(
       LoadObjectField<Int32T>(bytecode_array, BytecodeArray::kFrameSizeOffset));
   TNode<IntPtrT> size =
